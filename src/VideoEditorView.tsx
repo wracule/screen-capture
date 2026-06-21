@@ -17,9 +17,17 @@ import ZoomInOutlinedIcon from '@mui/icons-material/ZoomInOutlined'
 import ZoomOutOutlinedIcon from '@mui/icons-material/ZoomOutOutlined'
 import ChevronLeftRoundedIcon from '@mui/icons-material/ChevronLeftRounded'
 import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
-import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded'
+import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown'
+import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp'
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded'
 import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined'
+import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded'
+import PauseRoundedIcon from '@mui/icons-material/PauseRounded'
+import SkipPreviousRoundedIcon from '@mui/icons-material/SkipPreviousRounded'
+import SkipNextRoundedIcon from '@mui/icons-material/SkipNextRounded'
+import FastRewindRoundedIcon from '@mui/icons-material/FastRewindRounded'
+import FastForwardRoundedIcon from '@mui/icons-material/FastForwardRounded'
+import RecordVoiceOverRoundedIcon from '@mui/icons-material/RecordVoiceOverRounded'
 import Tooltip from '@mui/material/Tooltip'
 import ChatAddOnOutlined from './icons/ChatAddOnOutlined'
 import './VideoEditorView.css'
@@ -35,8 +43,8 @@ const FILMSTRIP_FRAMES = 14
 /** Prototype callout markers (% of timeline width) with varied spacing across the clip. */
 const CALLOUT_MARKER_PCTS = [0, 12, 21, 29, 38, 51, 59, 68, 79, 100]
 const CALLOUT_EDGE_END_PCT = 100
-/** Active dot size — must match `--timeline-callout-dot-size` in VideoEditorView.css. Inactive dots are 70% of this. */
-const CALLOUT_DOT_SIZE_PX = 26
+/** Active dot size — must match `--timeline-callout-dot-size` in VideoEditorView.css. Inactive dots are 55% of this. */
+const CALLOUT_DOT_SIZE_PX = 40
 /** Pull playhead to dot center when pointer enters this radius (≈ dot edge + magnetic slop). */
 const CALLOUT_SNAP_CAPTURE_PX = CALLOUT_DOT_SIZE_PX / 2 + 10
 /** Keep snap until pointer is dragged beyond this distance from the locked dot center. */
@@ -44,8 +52,101 @@ const CALLOUT_SNAP_RELEASE_PX = CALLOUT_DOT_SIZE_PX / 2 + 18
 /** Fine-tune active callout timing via focus chrome arrows (matches ruler notch interval). */
 const CALLOUT_NUDGE_STEP_SEC = 0.25
 const CALLOUT_NUDGE_MIN_GAP_SEC = CALLOUT_NUDGE_STEP_SEC / 2
+/** Playhead rewind / fast-forward step (matches timeline keyboard nudge). */
+const PLAYHEAD_NUDGE_STEP_SEC = 1
 
 type CalloutSpeedId = 'skip' | '0.5' | '1' | '1.5' | '2' | '2.5' | '3'
+
+/** Purple TTS bubble base width — must match `--timeline-tts-clip-core-base-w` in VideoEditorView.css. */
+const TTS_CLIP_CORE_BASE_W_PX = 48
+const TTS_CLIP_EXPANDED_SCALE = 3
+
+function ttsClipCoreWidthPx(expanded: boolean): number {
+  return TTS_CLIP_CORE_BASE_W_PX * (expanded ? TTS_CLIP_EXPANDED_SCALE : 1)
+}
+
+function ttsClipPurpleStartNorm(centerNorm: number, lineW: number, coreWPx = TTS_CLIP_CORE_BASE_W_PX): number {
+  if (lineW <= 1e-6) return centerNorm
+  return Math.min(1, Math.max(0, centerNorm - coreWPx / 2 / lineW))
+}
+
+function ttsClipPurpleEndNorm(centerNorm: number, lineW: number, coreWPx = TTS_CLIP_CORE_BASE_W_PX): number {
+  if (lineW <= 1e-6) return centerNorm
+  return Math.min(1, Math.max(0, centerNorm + coreWPx / 2 / lineW))
+}
+
+function clampTtsClipCenterNorm(centerNorm: number, lineW: number, coreWPx: number): number {
+  if (lineW <= 1e-6) return centerNorm
+  const halfNorm = coreWPx / 2 / lineW
+  return Math.min(1 - halfNorm, Math.max(halfNorm, centerNorm))
+}
+
+function ttsClipCenterNormFromPurpleStart(startNorm: number, lineW: number, coreWPx: number): number {
+  if (lineW <= 1e-6) return startNorm
+  return clampTtsClipCenterNorm(startNorm + coreWPx / 2 / lineW, lineW, coreWPx)
+}
+
+function isPlayheadOverTtsClip(
+  playheadNorm: number,
+  centerNorm: number,
+  lineW: number,
+  coreWPx = TTS_CLIP_CORE_BASE_W_PX,
+): boolean {
+  return (
+    playheadNorm >= ttsClipPurpleStartNorm(centerNorm, lineW, coreWPx) &&
+    playheadNorm <= ttsClipPurpleEndNorm(centerNorm, lineW, coreWPx)
+  )
+}
+
+function getTtsClipNudgeBoundsSec(
+  clipId: string,
+  clips: readonly TtsClip[],
+  lineW: number,
+  durationSec: number,
+  coreWidthForClip: (id: string) => number,
+): { minSec: number; maxSec: number } {
+  if (durationSec <= 0 || lineW <= 1e-6) return { minSec: 0, maxSec: 0 }
+
+  const coreWPx = coreWidthForClip(clipId)
+  const halfBubbleSec = (coreWPx / 2 / lineW) * durationSec
+  const minCenterSec = halfBubbleSec
+  const maxCenterSec = durationSec - halfBubbleSec
+
+  const sorted = [...clips].sort((a, b) => a.centerNorm - b.centerNorm)
+  const index = sorted.findIndex((clip) => clip.id === clipId)
+  if (index < 0) return { minSec: minCenterSec, maxSec: maxCenterSec }
+
+  const minSecFromPrev =
+    index > 0
+      ? sorted[index - 1]!.centerNorm * durationSec +
+        ((coreWidthForClip(sorted[index - 1]!.id) / 2 + coreWPx / 2) / lineW) * durationSec +
+        CALLOUT_NUDGE_MIN_GAP_SEC
+      : minCenterSec
+  const maxSecFromNext =
+    index < sorted.length - 1
+      ? sorted[index + 1]!.centerNorm * durationSec -
+        ((coreWidthForClip(sorted[index + 1]!.id) / 2 + coreWPx / 2) / lineW) * durationSec -
+        CALLOUT_NUDGE_MIN_GAP_SEC
+      : maxCenterSec
+
+  return {
+    minSec: Math.max(minCenterSec, minSecFromPrev),
+    maxSec: Math.min(maxCenterSec, maxSecFromNext),
+  }
+}
+
+const TTS_WAVE_BAR_HEIGHTS_PX = [11, 9, 4, 14, 9, 11, 9] as const
+const TTS_WAVE_BAR_COUNT = TTS_WAVE_BAR_HEIGHTS_PX.length
+
+function ttsWaveBarCount(expanded: boolean): number {
+  return expanded ? TTS_WAVE_BAR_COUNT * TTS_CLIP_EXPANDED_SCALE * 2 : TTS_WAVE_BAR_COUNT
+}
+
+type TtsClip = {
+  id: string
+  centerNorm: number
+  expanded: boolean
+}
 
 type CalloutSpeedOption = {
   id: CalloutSpeedId
@@ -64,17 +165,238 @@ const CALLOUT_SPEED_OPTIONS: CalloutSpeedOption[] = [
   { id: '3', display: '3X', label: 'MAX SPEED' },
 ]
 
-function createDefaultCalloutSpeedMap(): Record<number, CalloutSpeedId> {
-  const map: Record<number, CalloutSpeedId> = {}
-  CALLOUT_MARKER_PCTS.forEach((_, index) => {
-    map[index] = '1'
+type CalloutGuide = {
+  id: string
+  centerNorm: number
+}
+
+type TimelineOccupiedSpan = {
+  startSec: number
+  endSec: number
+}
+
+function minCalloutCenterGapSec(lineW: number, durationSec: number): number {
+  if (lineW <= 1e-6 || durationSec <= 0) return 0
+  const dotWidthSec = (CALLOUT_DOT_SIZE_PX / lineW) * durationSec
+  const edgeTouchGapSec = Math.max(0, dotWidthSec - CALLOUT_NUDGE_STEP_SEC)
+  return Math.min(edgeTouchGapSec, PLAYHEAD_NUDGE_STEP_SEC)
+}
+
+function timelineSpansConflict(
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number,
+  gapSec = CALLOUT_NUDGE_MIN_GAP_SEC,
+): boolean {
+  return aStart < bEnd + gapSec - 1e-6 && bStart < aEnd + gapSec - 1e-6
+}
+
+function ttsOccupiedSpanSec(
+  centerNorm: number,
+  lineW: number,
+  durationSec: number,
+  coreWPx: number,
+): TimelineOccupiedSpan {
+  const centerSec = centerNorm * durationSec
+  const halfSec = lineW > 1e-6 ? (coreWPx / 2 / lineW) * durationSec : 0
+  return { startSec: centerSec - halfSec, endSec: centerSec + halfSec }
+}
+
+function canPlaceCalloutGuideAtPlayhead(
+  playheadNorm: number,
+  guides: readonly CalloutGuide[],
+  lineW: number,
+  durationSec: number,
+): boolean {
+  if (durationSec <= 0 || lineW <= 1e-6) return false
+
+  const centerNorm = clampCalloutCenterNorm(playheadNorm, lineW)
+  const centerSec = centerNorm * durationSec
+  const halfDotSec = (CALLOUT_DOT_SIZE_PX / 2 / lineW) * durationSec
+
+  if (centerSec < halfDotSec - 1e-6 || centerSec > durationSec - halfDotSec + 1e-6) {
+    return false
+  }
+
+  const minCenterGapSec = minCalloutCenterGapSec(lineW, durationSec)
+  for (const guide of guides) {
+    const otherCenterSec = clampCalloutCenterNorm(guide.centerNorm, lineW) * durationSec
+    if (Math.abs(centerSec - otherCenterSec) < minCenterGapSec - 1e-6) {
+      return false
+    }
+  }
+
+  return true
+}
+
+function canPlaceTtsClipAtPlayhead(
+  playheadNorm: number,
+  clips: readonly TtsClip[],
+  lineW: number,
+  durationSec: number,
+  coreWPx = TTS_CLIP_CORE_BASE_W_PX,
+): boolean {
+  if (durationSec <= 0 || lineW <= 1e-6) return false
+
+  const centerNorm = ttsClipCenterNormFromPurpleStart(playheadNorm, lineW, coreWPx)
+  const startNorm = ttsClipPurpleStartNorm(centerNorm, lineW, coreWPx)
+  if (Math.abs(startNorm - playheadNorm) > 1e-6) {
+    return false
+  }
+
+  const ttsSpan = ttsOccupiedSpanSec(centerNorm, lineW, durationSec, coreWPx)
+  for (const clip of clips) {
+    const otherSpan = ttsOccupiedSpanSec(
+      clip.centerNorm,
+      lineW,
+      durationSec,
+      ttsClipCoreWidthPx(clip.expanded),
+    )
+    if (timelineSpansConflict(ttsSpan.startSec, ttsSpan.endSec, otherSpan.startSec, otherSpan.endSec, 0)) {
+      return false
+    }
+  }
+
+  return true
+}
+
+type TimelineSegment = {
+  startSec: number
+  endSec: number
+  guideId: string | null
+}
+
+function buildTimelineSegments(guides: readonly CalloutGuide[], durationSec: number): TimelineSegment[] {
+  if (durationSec <= 0) return []
+
+  const sorted = [...guides].sort((a, b) => a.centerNorm - b.centerNorm)
+  if (sorted.length === 0) {
+    return [{ startSec: 0, endSec: durationSec, guideId: null }]
+  }
+
+  const segments: TimelineSegment[] = [
+    {
+      startSec: 0,
+      endSec: sorted[0]!.centerNorm * durationSec,
+      guideId: null,
+    },
+  ]
+
+  for (let i = 0; i < sorted.length - 1; i++) {
+    segments.push({
+      startSec: sorted[i]!.centerNorm * durationSec,
+      endSec: sorted[i + 1]!.centerNorm * durationSec,
+      guideId: sorted[i]!.id,
+    })
+  }
+
+  segments.push({
+    startSec: sorted[sorted.length - 1]!.centerNorm * durationSec,
+    endSec: durationSec,
+    guideId: sorted[sorted.length - 1]!.id,
+  })
+
+  return segments
+}
+
+function findSegmentIndex(segments: readonly TimelineSegment[], timeSec: number): number {
+  if (segments.length === 0) return 0
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!
+    const isLast = i === segments.length - 1
+    if (timeSec >= seg.startSec - 1e-6 && (timeSec < seg.endSec - 1e-6 || isLast)) {
+      return i
+    }
+  }
+
+  return segments.length - 1
+}
+
+function getCalloutGuideIdAtTime(
+  guides: readonly CalloutGuide[],
+  durationSec: number,
+  timeSec: number,
+): string | null {
+  if (durationSec <= 0) return null
+
+  const sorted = [...guides].sort((a, b) => a.centerNorm - b.centerNorm)
+  for (const guide of sorted) {
+    const guideSec = guide.centerNorm * durationSec
+    if (Math.abs(guideSec - timeSec) < 1e-3) {
+      return guide.id
+    }
+  }
+
+  if (timeSec >= durationSec - 1e-3 && sorted.length > 0) {
+    return sorted[sorted.length - 1]!.id
+  }
+
+  return null
+}
+
+function getActiveGuideIdWhenSegmentStops(
+  segments: readonly TimelineSegment[],
+  segmentEndSec: number,
+  durationSec: number,
+  guides: readonly CalloutGuide[],
+): string | null {
+  const guideAtStop = getCalloutGuideIdAtTime(guides, durationSec, segmentEndSec)
+  if (guideAtStop != null) return guideAtStop
+
+  const nextSegment = segments.find((seg) => Math.abs(seg.startSec - segmentEndSec) < 1e-3)
+  if (nextSegment?.guideId != null) return nextSegment.guideId
+
+  const playingSegment = segments.find((seg) => Math.abs(seg.endSec - segmentEndSec) < 1e-3)
+  return playingSegment?.guideId ?? null
+}
+
+function findTimelineSegmentByEndSec(
+  segments: readonly TimelineSegment[],
+  segmentEndSec: number,
+): TimelineSegment | undefined {
+  return segments.find((seg) => Math.abs(seg.endSec - segmentEndSec) < 1e-3)
+}
+
+function createSeedCalloutGuides(): CalloutGuide[] {
+  return CALLOUT_MARKER_PCTS.map((pct, index) => ({
+    id: `callout-seed-${index}`,
+    centerNorm: pct / 100,
+  }))
+}
+
+function createDefaultCalloutSpeedMap(guides: readonly CalloutGuide[]): Record<string, CalloutSpeedId> {
+  const map: Record<string, CalloutSpeedId> = {}
+  guides.forEach((guide) => {
+    map[guide.id] = '1'
   })
   return map
+}
+
+function clampCalloutCenterNorm(centerNorm: number, lineW: number): number {
+  if (lineW <= 1e-6) return centerNorm
+  const halfNorm = CALLOUT_DOT_SIZE_PX / 2 / lineW
+  return Math.min(1 - halfNorm, Math.max(halfNorm, centerNorm))
 }
 
 function calloutSpeedDisplay(speedId: CalloutSpeedId): string {
   const option = CALLOUT_SPEED_OPTIONS.find((entry) => entry.id === speedId)
   return option?.display ?? '1X'
+}
+
+function calloutSpeedIndex(speedId: CalloutSpeedId): number {
+  const index = CALLOUT_SPEED_OPTIONS.findIndex((entry) => entry.id === speedId)
+  return index >= 0 ? index : CALLOUT_SPEED_OPTIONS.findIndex((entry) => entry.id === '1')
+}
+
+function cycleCalloutSpeed(speedId: CalloutSpeedId, direction: 1 | -1): CalloutSpeedId {
+  const index = calloutSpeedIndex(speedId)
+  const nextIndex = Math.min(
+    CALLOUT_SPEED_OPTIONS.length - 1,
+    Math.max(0, index + direction),
+  )
+  return CALLOUT_SPEED_OPTIONS[nextIndex]!.id
 }
 
 function calloutDotCenterNorm(leftPct: number, trackLineWidthPx: number): number {
@@ -88,56 +410,75 @@ function calloutDotCenterNorm(leftPct: number, trackLineWidthPx: number): number
   return leftPct / 100
 }
 
-function firstCalloutDotCenterNorm(trackLineWidthPx: number): number {
-  return calloutDotCenterNorm(CALLOUT_MARKER_PCTS[0]!, trackLineWidthPx)
+function calloutGuideCenterClientX(rect: DOMRect, centerNorm: number, lineW: number): number {
+  return rect.left + calloutGuideCenterOffsetPx(centerNorm, lineW)
 }
 
-function getCalloutBaseNorm(index: number, lineW: number): number {
-  return calloutDotCenterNorm(CALLOUT_MARKER_PCTS[index]!, lineW)
-}
-
-function getCalloutEffectiveNorm(
-  index: number,
-  nudgesSec: readonly number[],
-  lineW: number,
-  durationSec: number,
-): number {
-  const baseNorm = getCalloutBaseNorm(index, lineW)
-  if (durationSec <= 0) return baseNorm
-  return Math.min(1, Math.max(0, baseNorm + (nudgesSec[index] ?? 0) / durationSec))
-}
-
-function calloutEffectiveCenterClientX(
-  rect: DOMRect,
-  index: number,
-  nudgesSec: readonly number[],
-  lineW: number,
-  durationSec: number,
-): number {
-  const norm = getCalloutEffectiveNorm(index, nudgesSec, lineW, durationSec)
+function calloutGuideCenterOffsetPx(centerNorm: number, lineW: number): number {
   const half = CALLOUT_DOT_SIZE_PX / 2
-  if (norm <= half / lineW + 1e-6) return rect.left + half
-  if (norm >= 1 - half / lineW - 1e-6) return rect.right - half
-  return rect.left + norm * rect.width
+  if (lineW <= 1e-6) return centerNorm * lineW
+  if (centerNorm <= half / lineW + 1e-6) return half
+  if (centerNorm >= 1 - half / lineW - 1e-6) return lineW - half
+  return centerNorm * lineW
+}
+
+function resolveCalloutGuideSnapForPlayheadNudge(
+  nextPlayheadNorm: number,
+  currentPlayheadNorm: number,
+  guides: readonly CalloutGuide[],
+  lineW: number,
+): CalloutGuide | null {
+  if (lineW <= 1e-6 || guides.length === 0) return null
+
+  const nextPx = nextPlayheadNorm * lineW
+  const currentPx = currentPlayheadNorm * lineW
+
+  let snapGuide: CalloutGuide | null = null
+  let nearestDist = CALLOUT_SNAP_CAPTURE_PX + 1
+
+  for (const guide of guides) {
+    const centerPx = calloutGuideCenterOffsetPx(guide.centerNorm, lineW)
+    const nextDist = Math.abs(nextPx - centerPx)
+    if (nextDist > CALLOUT_SNAP_CAPTURE_PX) continue
+
+    const currentDist = Math.abs(currentPx - centerPx)
+    if (nextDist >= currentDist - 1e-6) continue
+
+    if (nextDist < nearestDist) {
+      nearestDist = nextDist
+      snapGuide = guide
+    }
+  }
+
+  return snapGuide
 }
 
 function getCalloutNudgeBoundsSec(
-  index: number,
-  nudgesSec: readonly number[],
+  guideId: string,
+  guides: readonly CalloutGuide[],
   lineW: number,
   durationSec: number,
 ): { minSec: number; maxSec: number } {
-  const minSec =
-    index > 0
-      ? getCalloutEffectiveNorm(index - 1, nudgesSec, lineW, durationSec) * durationSec +
-        CALLOUT_NUDGE_MIN_GAP_SEC
-      : 0
-  const maxSec =
-    index < CALLOUT_MARKER_PCTS.length - 1
-      ? getCalloutEffectiveNorm(index + 1, nudgesSec, lineW, durationSec) * durationSec -
-        CALLOUT_NUDGE_MIN_GAP_SEC
-      : durationSec
-  return { minSec, maxSec }
+  const halfDotSec = lineW > 1e-6 ? (CALLOUT_DOT_SIZE_PX / 2 / lineW) * durationSec : 0
+  const minCenterSec = halfDotSec
+  const maxCenterSec = durationSec - halfDotSec
+
+  const sorted = [...guides].sort((a, b) => a.centerNorm - b.centerNorm)
+  const index = sorted.findIndex((guide) => guide.id === guideId)
+  if (index < 0) return { minSec: minCenterSec, maxSec: maxCenterSec }
+
+  const gapSec = minCalloutCenterGapSec(lineW, durationSec)
+  const minSecFromPrev =
+    index > 0 ? sorted[index - 1]!.centerNorm * durationSec + gapSec : minCenterSec
+  const maxSecFromNext =
+    index < sorted.length - 1
+      ? sorted[index + 1]!.centerNorm * durationSec - gapSec
+      : maxCenterSec
+
+  return {
+    minSec: Math.max(minCenterSec, minSecFromPrev),
+    maxSec: Math.min(maxCenterSec, maxSecFromNext),
+  }
 }
 
 function calloutFocusChromeAnchorStyleFromNorm(norm: number, lineW: number): React.CSSProperties {
@@ -218,40 +559,38 @@ function buildTourCalloutForIndex(index: number): TourCalloutPreview {
   }
 }
 
-type CalloutDotSnap = { clientX: number; index: number }
+type CalloutDotSnap = { clientX: number; guideId: string }
 
 function resolveCalloutDotSnap(
   clientX: number,
   trackLineEl: HTMLElement | null,
-  lockedIndex: number | null,
-  nudgesSec: readonly number[],
-  durationSec: number,
+  lockedGuideId: string | null,
+  guides: readonly CalloutGuide[],
 ): CalloutDotSnap | null {
   if (!trackLineEl) return null
   const rect = trackLineEl.getBoundingClientRect()
   const lineW = rect.width
   if (lineW <= 1e-6) return null
 
-  if (
-    lockedIndex != null &&
-    lockedIndex >= 0 &&
-    lockedIndex < CALLOUT_MARKER_PCTS.length
-  ) {
-    const centerX = calloutEffectiveCenterClientX(rect, lockedIndex, nudgesSec, lineW, durationSec)
-    if (Math.abs(clientX - centerX) <= CALLOUT_SNAP_RELEASE_PX) {
-      return { clientX: centerX, index: lockedIndex }
+  if (lockedGuideId != null) {
+    const lockedGuide = guides.find((guide) => guide.id === lockedGuideId)
+    if (lockedGuide) {
+      const centerX = calloutGuideCenterClientX(rect, lockedGuide.centerNorm, lineW)
+      if (Math.abs(clientX - centerX) <= CALLOUT_SNAP_RELEASE_PX) {
+        return { clientX: centerX, guideId: lockedGuideId }
+      }
     }
   }
 
   let snap: CalloutDotSnap | null = null
   let nearestDist = CALLOUT_SNAP_CAPTURE_PX + 1
 
-  for (let index = 0; index < CALLOUT_MARKER_PCTS.length; index++) {
-    const centerX = calloutEffectiveCenterClientX(rect, index, nudgesSec, lineW, durationSec)
+  for (const guide of guides) {
+    const centerX = calloutGuideCenterClientX(rect, guide.centerNorm, lineW)
     const dist = Math.abs(clientX - centerX)
     if (dist <= CALLOUT_SNAP_CAPTURE_PX && dist < nearestDist) {
       nearestDist = dist
-      snap = { clientX: centerX, index }
+      snap = { clientX: centerX, guideId: guide.id }
     }
   }
 
@@ -351,24 +690,32 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
   const filmstripStripRef = useRef<HTMLDivElement>(null)
   const timelineScrubbingRef = useRef(false)
   const scrubPrevClientXRef = useRef<number | null>(null)
-  const snappedCalloutIndexRef = useRef<number | null>(null)
+  const snappedCalloutGuideIdRef = useRef<string | null>(null)
   /** Callout kept in focus after snap/nudge until the user scrubs off it. */
-  const focusedCalloutIndexRef = useRef<number | null>(null)
+  const focusedCalloutGuideIdRef = useRef<string | null>(null)
   const pendingInitialPlayheadSeekRef = useRef(true)
   /** True while pointer-drag scrubbing that began on the playhead tip (keep col-resize cursor). */
   const [scrubFromPlayheadTip, setScrubFromPlayheadTip] = useState(false)
   const [timelineScrubbing, setTimelineScrubbing] = useState(false)
-  const [activeCalloutDotIndex, setActiveCalloutDotIndex] = useState<number | null>(null)
-  const [visitedCalloutDots, setVisitedCalloutDots] = useState<Set<number>>(() => new Set())
-  const [calloutTimeNudgesSec, setCalloutTimeNudgesSec] = useState<number[]>(() =>
-    CALLOUT_MARKER_PCTS.map(() => 0),
-  )
+  const [calloutGuides, setCalloutGuides] = useState<CalloutGuide[]>(() => createSeedCalloutGuides())
+  const calloutSeedsFixedRef = useRef(false)
+  const calloutGuideIdRef = useRef(0)
+  const [activeCalloutGuideId, setActiveCalloutGuideId] = useState<string | null>(null)
+  const [visitedCalloutGuideIds, setVisitedCalloutGuideIds] = useState<Set<string>>(() => new Set())
   const [calloutTrackLineWidthPx, setCalloutTrackLineWidthPx] = useState(0)
   const [calloutSpeedMenuOpen, setCalloutSpeedMenuOpen] = useState(false)
   const calloutSpeedMenuRef = useRef<HTMLDivElement>(null)
-  const [calloutSpeedByIndex, setCalloutSpeedByIndex] = useState<Record<number, CalloutSpeedId>>(
-    createDefaultCalloutSpeedMap,
+  const [calloutSpeedByGuideId, setCalloutSpeedByGuideId] = useState<Record<string, CalloutSpeedId>>(() =>
+    createDefaultCalloutSpeedMap(createSeedCalloutGuides()),
   )
+  const [ttsClips, setTtsClips] = useState<TtsClip[]>([])
+  const [focusedTtsClipId, setFocusedTtsClipId] = useState<string | null>(null)
+  const ttsClipIdRef = useRef(0)
+  const segmentPlayEndSecRef = useRef<number | null>(null)
+  const calloutGuidesRef = useRef(calloutGuides)
+  const timelineSegmentsRef = useRef<TimelineSegment[]>([])
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false)
+  const [tourVoiceEnabled, setTourVoiceEnabled] = useState(true)
   const [reloadToken, setReloadToken] = useState(0)
   const [title, setTitle] = useState('The Title/Name of this Dynamic Tour')
   const [titleDraft, setTitleDraft] = useState('')
@@ -394,31 +741,24 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
   const mediaSrc = cacheBustedSrc(videoSrc, reloadToken)
 
   const syncCalloutDotStates = useCallback(
-    (activeIndex: number | null, playheadNorm: number) => {
-      if (activeIndex == null) {
-        focusedCalloutIndexRef.current = null
-      } else {
-        focusedCalloutIndexRef.current = activeIndex
-      }
+    (activeGuideId: string | null, playheadNorm: number) => {
+      focusedCalloutGuideIdRef.current = activeGuideId
 
-      const visited = new Set<number>()
-      const lineEl = calloutTrackLineRef.current
-      const lineW = lineEl?.getBoundingClientRect().width ?? 0
-
-      if (lineW > 1e-6 && duration > 0) {
-        for (let i = 0; i < CALLOUT_MARKER_PCTS.length; i++) {
-          if (getCalloutEffectiveNorm(i, calloutTimeNudgesSec, lineW, duration) <= playheadNorm + 1e-6) {
-            visited.add(i)
+      const visited = new Set<string>()
+      if (calloutTrackLineWidthPx > 1e-6 && duration > 0) {
+        for (const guide of calloutGuides) {
+          if (guide.centerNorm <= playheadNorm + 1e-6) {
+            visited.add(guide.id)
           }
         }
-      } else if (activeIndex != null) {
-        visited.add(activeIndex)
+      } else if (activeGuideId != null) {
+        visited.add(activeGuideId)
       }
 
-      setVisitedCalloutDots(visited)
-      setActiveCalloutDotIndex(activeIndex)
+      setVisitedCalloutGuideIds(visited)
+      setActiveCalloutGuideId(activeGuideId)
     },
-    [calloutTimeNudgesSec, duration],
+    [calloutGuides, calloutTrackLineWidthPx, duration],
   )
 
   useLayoutEffect(() => {
@@ -434,6 +774,19 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
     ro.observe(el)
     return () => ro.disconnect()
   }, [duration, filmstripReady])
+
+  useLayoutEffect(() => {
+    if (calloutTrackLineWidthPx <= 1e-6 || calloutSeedsFixedRef.current) return
+    calloutSeedsFixedRef.current = true
+    setCalloutGuides((prev) => {
+      const added = prev.filter((guide) => !guide.id.startsWith('callout-seed-'))
+      const seeds = CALLOUT_MARKER_PCTS.map((pct, index) => ({
+        id: `callout-seed-${index}`,
+        centerNorm: calloutDotCenterNorm(pct, calloutTrackLineWidthPx),
+      }))
+      return [...seeds, ...added].sort((a, b) => a.centerNorm - b.centerNorm)
+    })
+  }, [calloutTrackLineWidthPx])
 
   useLayoutEffect(() => {
     const el = filmstripStripRef.current
@@ -476,11 +829,12 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
     const applyInitialPlayheadSeek = () => {
       const lineW = lineEl.getBoundingClientRect().width
       if (lineW <= 1e-6) return false
-      const t = firstCalloutDotCenterNorm(lineW) * duration
+      const firstGuide = calloutGuides[0]
+      if (!firstGuide) return false
+      const t = firstGuide.centerNorm * duration
       video.currentTime = t
       setCurrentTime(t)
-      const playheadNorm = firstCalloutDotCenterNorm(lineW)
-      syncCalloutDotStates(0, playheadNorm)
+      syncCalloutDotStates(firstGuide.id, firstGuide.centerNorm)
       pendingInitialPlayheadSeekRef.current = false
       return true
     }
@@ -494,7 +848,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
     })
     ro.observe(lineEl)
     return () => ro.disconnect()
-  }, [duration, loadError, mediaSrc, syncCalloutDotStates])
+  }, [duration, loadError, mediaSrc, syncCalloutDotStates, calloutGuides])
 
   const reloadVideoFile = useCallback(() => {
     setReloadToken((n) => n + 1)
@@ -504,12 +858,15 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
     setFilmstrip([])
     setFilmstripReady(false)
     setVideoIntrinsicSize(null)
-    setActiveCalloutDotIndex(null)
-    setVisitedCalloutDots(new Set())
-    setCalloutTimeNudgesSec(CALLOUT_MARKER_PCTS.map(() => 0))
+    setActiveCalloutGuideId(null)
+    setVisitedCalloutGuideIds(new Set())
+    const seeds = createSeedCalloutGuides()
+    setCalloutGuides(seeds)
+    calloutSeedsFixedRef.current = false
     setCalloutSpeedMenuOpen(false)
-    setCalloutSpeedByIndex(createDefaultCalloutSpeedMap())
-    focusedCalloutIndexRef.current = null
+    setCalloutSpeedByGuideId(createDefaultCalloutSpeedMap(seeds))
+    focusedCalloutGuideIdRef.current = null
+    snappedCalloutGuideIdRef.current = null
     pendingInitialPlayheadSeekRef.current = true
   }, [])
 
@@ -526,61 +883,143 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
     el.currentTime = Math.min(Math.max(0, t), d)
   }, [duration])
 
+  const nudgePlayhead = useCallback(
+    (delta: -1 | 1, stepSec = PLAYHEAD_NUDGE_STEP_SEC) => {
+      if (loadError || duration <= 0) return
+
+      const nextSec = Math.min(duration, Math.max(0, currentTime + stepSec * delta))
+      if (Math.abs(nextSec - currentTime) <= 1e-6) return
+
+      segmentPlayEndSecRef.current = null
+      videoRef.current?.pause()
+
+      const lineW =
+        calloutTrackLineWidthPx > 1e-6
+          ? calloutTrackLineWidthPx
+          : (calloutTrackLineRef.current?.getBoundingClientRect().width ?? 0)
+
+      const currentNorm = currentTime / duration
+      const nextNorm = nextSec / duration
+      const snappedGuide =
+        lineW > 1e-6
+          ? resolveCalloutGuideSnapForPlayheadNudge(
+              nextNorm,
+              currentNorm,
+              calloutGuides,
+              lineW,
+            )
+          : null
+
+      if (snappedGuide) {
+        const snapSec = snappedGuide.centerNorm * duration
+        seekTo(snapSec)
+        setCurrentTime(snapSec)
+        syncCalloutDotStates(snappedGuide.id, snappedGuide.centerNorm)
+        snappedCalloutGuideIdRef.current = snappedGuide.id
+        focusedCalloutGuideIdRef.current = snappedGuide.id
+        return
+      }
+
+      seekTo(nextSec)
+      setCurrentTime(nextSec)
+      snappedCalloutGuideIdRef.current = null
+      syncCalloutDotStates(null, nextNorm)
+    },
+    [
+      loadError,
+      duration,
+      currentTime,
+      calloutTrackLineWidthPx,
+      calloutGuides,
+      seekTo,
+      syncCalloutDotStates,
+    ],
+  )
+
+  const nudgePlayheadBack = useCallback(() => {
+    nudgePlayhead(-1)
+  }, [nudgePlayhead])
+
+  const nudgePlayheadForward = useCallback(() => {
+    nudgePlayhead(1)
+  }, [nudgePlayhead])
+
+  const canNudgePlayheadBack = !loadError && duration > 0 && currentTime > 1e-6
+  const canNudgePlayheadForward =
+    !loadError && duration > 0 && currentTime < duration - 1e-6
+
   const nudgeActiveCallout = useCallback(
     (delta: -1 | 1) => {
-      const index = activeCalloutDotIndex ?? focusedCalloutIndexRef.current
-      if (index == null || duration <= 0) return
+      const guideId = activeCalloutGuideId ?? focusedCalloutGuideIdRef.current
+      if (guideId == null || duration <= 0) return
+
+      const guide = calloutGuides.find((entry) => entry.id === guideId)
+      if (!guide) return
 
       const lineEl = calloutTrackLineRef.current
       if (!lineEl) return
       const lineW = lineEl.getBoundingClientRect().width
       if (lineW <= 1e-6) return
 
-      const { minSec, maxSec } = getCalloutNudgeBoundsSec(
-        index,
-        calloutTimeNudgesSec,
-        lineW,
-        duration,
-      )
-      const currentSec = getCalloutEffectiveNorm(index, calloutTimeNudgesSec, lineW, duration) * duration
+      const { minSec, maxSec } = getCalloutNudgeBoundsSec(guideId, calloutGuides, lineW, duration)
+      const currentSec = guide.centerNorm * duration
       const nextSec = Math.min(maxSec, Math.max(minSec, currentSec + CALLOUT_NUDGE_STEP_SEC * delta))
       if (Math.abs(nextSec - currentSec) <= 1e-6) return
 
-      const baseSec = getCalloutBaseNorm(index, lineW) * duration
-      const nextNudgeSec = nextSec - baseSec
-
-      setCalloutTimeNudgesSec((prev) => {
-        const next = [...prev]
-        next[index] = nextNudgeSec
-        return next
-      })
-
       const nextNorm = nextSec / duration
+      setCalloutGuides((prev) =>
+        prev.map((entry) =>
+          entry.id === guideId ? { ...entry, centerNorm: nextNorm } : entry,
+        ),
+      )
+
       setCurrentTime(nextSec)
       seekTo(nextSec)
-      syncCalloutDotStates(index, nextNorm)
-      snappedCalloutIndexRef.current = index
-      focusedCalloutIndexRef.current = index
+      syncCalloutDotStates(guideId, nextNorm)
+      snappedCalloutGuideIdRef.current = guideId
+      focusedCalloutGuideIdRef.current = guideId
     },
-    [activeCalloutDotIndex, calloutTimeNudgesSec, duration, seekTo, syncCalloutDotStates],
+    [activeCalloutGuideId, calloutGuides, duration, seekTo, syncCalloutDotStates],
   )
+
+  const addCalloutGuide = useCallback(() => {
+    if (loadError || duration <= 0 || calloutTrackLineWidthPx <= 1e-6) return
+    const playheadNormAtAdd = currentTime / duration
+    if (
+      !canPlaceCalloutGuideAtPlayhead(
+        playheadNormAtAdd,
+        calloutGuides,
+        calloutTrackLineWidthPx,
+        duration,
+      )
+    ) {
+      return
+    }
+    const centerNorm = clampCalloutCenterNorm(playheadNormAtAdd, calloutTrackLineWidthPx)
+    const id = `callout-${calloutGuideIdRef.current++}`
+    setCalloutGuides((prev) =>
+      [...prev, { id, centerNorm }].sort((a, b) => a.centerNorm - b.centerNorm),
+    )
+    setCalloutSpeedByGuideId((prev) => ({ ...prev, [id]: '1' }))
+    setCurrentTime(centerNorm * duration)
+    seekTo(centerNorm * duration)
+    syncCalloutDotStates(id, centerNorm)
+    snappedCalloutGuideIdRef.current = id
+    focusedCalloutGuideIdRef.current = id
+  }, [loadError, duration, calloutTrackLineWidthPx, currentTime, calloutGuides, ttsClips, seekTo, syncCalloutDotStates])
 
   useEffect(() => {
     if (duration <= 0 || calloutTrackLineWidthPx <= 1e-6) return
-    const index = focusedCalloutIndexRef.current
-    if (index == null) return
-    const norm = getCalloutEffectiveNorm(
-      index,
-      calloutTimeNudgesSec,
-      calloutTrackLineWidthPx,
-      duration,
-    )
-    syncCalloutDotStates(index, norm)
-  }, [calloutTimeNudgesSec, calloutTrackLineWidthPx, duration, syncCalloutDotStates])
+    const guideId = focusedCalloutGuideIdRef.current
+    if (guideId == null) return
+    const guide = calloutGuides.find((entry) => entry.id === guideId)
+    if (!guide) return
+    syncCalloutDotStates(guideId, guide.centerNorm)
+  }, [calloutGuides, calloutTrackLineWidthPx, duration, syncCalloutDotStates])
 
   useEffect(() => {
     setCalloutSpeedMenuOpen(false)
-  }, [activeCalloutDotIndex])
+  }, [activeCalloutGuideId])
 
   useEffect(() => {
     if (!calloutSpeedMenuOpen) return
@@ -595,6 +1034,21 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [calloutSpeedMenuOpen])
+
+  useEffect(() => {
+    if (focusedTtsClipId == null) return
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (target.closest('.video-editor__timeline-tts-clip') != null) return
+      if (target.closest('.video-editor__tts-dialogue-layer') != null) return
+      setFocusedTtsClipId(null)
+    }
+
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [focusedTtsClipId])
 
   useEffect(() => {
     const video = videoRef.current
@@ -622,17 +1076,47 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
         return
       }
       setCurrentTime(t)
-      syncCalloutDotStates(focusedCalloutIndexRef.current, t / d)
+      const segmentEnd = segmentPlayEndSecRef.current
+      if (segmentEnd != null && t >= segmentEnd - 1e-3 && !video.paused) {
+        video.pause()
+        video.currentTime = segmentEnd
+        setCurrentTime(segmentEnd)
+        segmentPlayEndSecRef.current = null
+        const activeGuideId = getActiveGuideIdWhenSegmentStops(
+          timelineSegmentsRef.current,
+          segmentEnd,
+          d,
+          calloutGuidesRef.current,
+        )
+        syncCalloutDotStates(activeGuideId, segmentEnd / d)
+        snappedCalloutGuideIdRef.current = activeGuideId
+        return
+      }
+      if (segmentEnd != null && !video.paused) {
+        const playingSegment = findTimelineSegmentByEndSec(timelineSegmentsRef.current, segmentEnd)
+        syncCalloutDotStates(playingSegment?.guideId ?? focusedCalloutGuideIdRef.current, t / d)
+        return
+      }
+      syncCalloutDotStates(focusedCalloutGuideIdRef.current, t / d)
+    }
+    const onPlay = () => setIsVideoPlaying(true)
+    const onPause = () => {
+      setIsVideoPlaying(false)
+      segmentPlayEndSecRef.current = null
     }
     const onError = () => setLoadError(true)
 
     video.addEventListener('loadedmetadata', onLoadedMeta)
     video.addEventListener('timeupdate', onTimeUpdate)
+    video.addEventListener('play', onPlay)
+    video.addEventListener('pause', onPause)
     video.addEventListener('error', onError)
 
     return () => {
       video.removeEventListener('loadedmetadata', onLoadedMeta)
       video.removeEventListener('timeupdate', onTimeUpdate)
+      video.removeEventListener('play', onPlay)
+      video.removeEventListener('pause', onPause)
       video.removeEventListener('error', onError)
     }
   }, [mediaSrc, syncCalloutDotStates])
@@ -646,8 +1130,8 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
     }
 
     let cancelled = false
-    const w = 88
-    const h = 50
+    const w = 44
+    const h = 25
     const canvas = document.createElement('canvas')
     canvas.width = w
     canvas.height = h
@@ -700,9 +1184,8 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
         ? resolveCalloutDotSnap(
             clientX,
             calloutTrackLineRef.current,
-            snappedCalloutIndexRef.current,
-            calloutTimeNudgesSec,
-            d,
+            snappedCalloutGuideIdRef.current,
+            calloutGuides,
           )
         : null
 
@@ -710,19 +1193,16 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
       let t: number
 
       if (snap != null) {
-        const lineEl = calloutTrackLineRef.current
-        if (!lineEl) return
-        const lr = lineEl.getBoundingClientRect()
-        if (lr.width <= 1e-6) return
-        const u = getCalloutEffectiveNorm(snap.index, calloutTimeNudgesSec, lr.width, d)
-        seekTo(u * d)
-        syncCalloutDotStates(snap.index, u)
-        snappedCalloutIndexRef.current = snap.index
+        const snappedGuide = calloutGuides.find((entry) => entry.id === snap.guideId)
+        if (!snappedGuide) return
+        seekTo(snappedGuide.centerNorm * d)
+        syncCalloutDotStates(snap.guideId, snappedGuide.centerNorm)
+        snappedCalloutGuideIdRef.current = snap.guideId
         scrubPrevClientXRef.current = clientX
         return
       }
 
-      snappedCalloutIndexRef.current = null
+      snappedCalloutGuideIdRef.current = null
 
       if (rangeEl) {
         const trackEl = filmstripStripRef.current?.closest(
@@ -773,10 +1253,11 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
       }
 
       seekTo(t)
+      segmentPlayEndSecRef.current = null
       syncCalloutDotStates(null, t / d)
       scrubPrevClientXRef.current = clientX
     },
-    [calloutTimeNudgesSec, duration, seekTo, syncCalloutDotStates],
+    [calloutGuides, duration, seekTo, syncCalloutDotStates],
   )
 
   const onFilmstripWheelPanScroll = (e: ReactWheelEvent<HTMLDivElement>) => {
@@ -798,7 +1279,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
     if (!timelineScrubbingRef.current) return
     timelineScrubbingRef.current = false
     scrubPrevClientXRef.current = null
-    snappedCalloutIndexRef.current = null
+    snappedCalloutGuideIdRef.current = null
     setTimelineScrubbing(false)
     setScrubFromPlayheadTip(false)
     try {
@@ -811,7 +1292,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
   const onTimelineStripLostPointerCapture = () => {
     timelineScrubbingRef.current = false
     scrubPrevClientXRef.current = null
-    snappedCalloutIndexRef.current = null
+    snappedCalloutGuideIdRef.current = null
     setTimelineScrubbing(false)
     setScrubFromPlayheadTip(false)
   }
@@ -819,6 +1300,11 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
   const onTimelinePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || loadError || duration <= 0) return
     const target = e.target
+    if (
+      !(target instanceof Element && target.closest('.video-editor__timeline-tts-clip') != null)
+    ) {
+      setFocusedTtsClipId(null)
+    }
     const fromPlayheadTip =
       target instanceof Element &&
       (target.closest('.video-editor__timeline-playhead-tip') != null ||
@@ -837,13 +1323,294 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
       ? Math.min(100, Math.max(0, (currentTime / duration) * 100))
       : 0
 
-  const activeTourCallout = useMemo(
-    () => (activeCalloutDotIndex != null ? buildTourCalloutForIndex(activeCalloutDotIndex) : null),
-    [activeCalloutDotIndex],
+  const playheadNorm = duration > 0 ? currentTime / duration : 0
+
+  const canAddCalloutGuide = useMemo(
+    () =>
+      !loadError &&
+      duration > 0 &&
+      calloutTrackLineWidthPx > 1e-6 &&
+      canPlaceCalloutGuideAtPlayhead(
+        playheadNorm,
+        calloutGuides,
+        calloutTrackLineWidthPx,
+        duration,
+      ),
+    [loadError, duration, calloutTrackLineWidthPx, playheadNorm, calloutGuides],
   )
 
+  const canAddTtsClip = useMemo(
+    () =>
+      !loadError &&
+      duration > 0 &&
+      calloutTrackLineWidthPx > 1e-6 &&
+      canPlaceTtsClipAtPlayhead(
+        playheadNorm,
+        ttsClips,
+        calloutTrackLineWidthPx,
+        duration,
+      ),
+    [loadError, duration, calloutTrackLineWidthPx, playheadNorm, ttsClips],
+  )
+
+  const timelineSegments = useMemo(
+    () => buildTimelineSegments(calloutGuides, duration),
+    [calloutGuides, duration],
+  )
+
+  calloutGuidesRef.current = calloutGuides
+  timelineSegmentsRef.current = timelineSegments
+
+  const currentSegmentIndex = useMemo(
+    () => findSegmentIndex(timelineSegments, currentTime),
+    [timelineSegments, currentTime],
+  )
+
+  const canSkipSegmentBack = currentSegmentIndex > 0
+  const canSkipSegmentForward =
+    timelineSegments.length > 0 && currentSegmentIndex < timelineSegments.length - 1
+
+  const goToSegmentStart = useCallback(
+    (segmentIndex: number) => {
+      if (duration <= 0) return
+      const segment = timelineSegments[segmentIndex]
+      if (!segment) return
+
+      const video = videoRef.current
+      segmentPlayEndSecRef.current = null
+      video?.pause()
+
+      seekTo(segment.startSec)
+      setCurrentTime(segment.startSec)
+      const norm = segment.startSec / duration
+      if (segment.guideId) {
+        syncCalloutDotStates(segment.guideId, norm)
+        snappedCalloutGuideIdRef.current = segment.guideId
+      } else {
+        syncCalloutDotStates(null, norm)
+        snappedCalloutGuideIdRef.current = null
+      }
+    },
+    [duration, timelineSegments, seekTo, syncCalloutDotStates],
+  )
+
+  const skipToPreviousSegment = useCallback(() => {
+    if (!canSkipSegmentBack) return
+    goToSegmentStart(currentSegmentIndex - 1)
+  }, [canSkipSegmentBack, currentSegmentIndex, goToSegmentStart])
+
+  const skipToNextSegment = useCallback(() => {
+    if (!canSkipSegmentForward) return
+    goToSegmentStart(currentSegmentIndex + 1)
+  }, [canSkipSegmentForward, currentSegmentIndex, goToSegmentStart])
+
+  const toggleSegmentPlayback = useCallback(() => {
+    const video = videoRef.current
+    if (!video || loadError || duration <= 0 || timelineSegments.length === 0) return
+
+    if (!video.paused) {
+      video.pause()
+      segmentPlayEndSecRef.current = null
+      return
+    }
+
+    const segment = timelineSegments[currentSegmentIndex]
+    if (!segment) return
+
+    segmentPlayEndSecRef.current = segment.endSec
+    if (video.currentTime < segment.startSec || video.currentTime >= segment.endSec - 1e-3) {
+      seekTo(segment.startSec)
+      setCurrentTime(segment.startSec)
+    }
+
+    const norm = Math.min(segment.endSec, Math.max(segment.startSec, video.currentTime)) / duration
+    if (segment.guideId) {
+      syncCalloutDotStates(segment.guideId, norm)
+      snappedCalloutGuideIdRef.current = segment.guideId
+    } else {
+      syncCalloutDotStates(null, norm)
+      snappedCalloutGuideIdRef.current = null
+    }
+
+    void video.play()
+  }, [
+    loadError,
+    duration,
+    timelineSegments,
+    currentSegmentIndex,
+    seekTo,
+    syncCalloutDotStates,
+  ])
+
+  const addTtsClip = useCallback(() => {
+    if (loadError || duration <= 0 || calloutTrackLineWidthPx <= 1e-6) return
+    const playheadNormAtAdd = currentTime / duration
+    if (
+      !canPlaceTtsClipAtPlayhead(
+        playheadNormAtAdd,
+        ttsClips,
+        calloutTrackLineWidthPx,
+        duration,
+      )
+    ) {
+      return
+    }
+    const centerNorm = ttsClipCenterNormFromPurpleStart(
+      playheadNormAtAdd,
+      calloutTrackLineWidthPx,
+      TTS_CLIP_CORE_BASE_W_PX,
+    )
+    const id = `tts-${ttsClipIdRef.current++}`
+    setTtsClips((prev) => [...prev, { id, centerNorm, expanded: false }])
+    setFocusedTtsClipId(id)
+    seekTo(playheadNormAtAdd * duration)
+    setCurrentTime(playheadNormAtAdd * duration)
+  }, [loadError, duration, calloutTrackLineWidthPx, currentTime, ttsClips, seekTo])
+
+  const getTtsClipCoreWidthForId = useCallback(
+    (clipId: string) => {
+      const clip = ttsClips.find((entry) => entry.id === clipId)
+      return ttsClipCoreWidthPx(clip?.expanded ?? false)
+    },
+    [ttsClips],
+  )
+
+  const focusTtsClip = useCallback(
+    (clip: TtsClip) => {
+      setFocusedTtsClipId(clip.id)
+      if (duration <= 0 || calloutTrackLineWidthPx <= 1e-6) return
+      const coreWPx = ttsClipCoreWidthPx(clip.expanded)
+      const startNorm = ttsClipPurpleStartNorm(clip.centerNorm, calloutTrackLineWidthPx, coreWPx)
+      seekTo(startNorm * duration)
+    },
+    [duration, calloutTrackLineWidthPx, seekTo],
+  )
+
+  const toggleTtsDialogueBubbleSize = useCallback(() => {
+    if (focusedTtsClipId == null || duration <= 0 || calloutTrackLineWidthPx <= 1e-6) return
+
+    const clip = ttsClips.find((entry) => entry.id === focusedTtsClipId)
+    if (!clip) return
+
+    const nextExpanded = !clip.expanded
+    const currentCoreWPx = ttsClipCoreWidthPx(clip.expanded)
+    const nextCoreWPx = ttsClipCoreWidthPx(nextExpanded)
+    const purpleStartNorm = ttsClipPurpleStartNorm(
+      clip.centerNorm,
+      calloutTrackLineWidthPx,
+      currentCoreWPx,
+    )
+    const nextCenterNorm = ttsClipCenterNormFromPurpleStart(
+      purpleStartNorm,
+      calloutTrackLineWidthPx,
+      nextCoreWPx,
+    )
+
+    setTtsClips((prev) =>
+      prev.map((entry) =>
+        entry.id === focusedTtsClipId
+          ? { ...entry, expanded: nextExpanded, centerNorm: nextCenterNorm }
+          : entry,
+      ),
+    )
+
+    const startNorm = ttsClipPurpleStartNorm(nextCenterNorm, calloutTrackLineWidthPx, nextCoreWPx)
+    setCurrentTime(startNorm * duration)
+    seekTo(startNorm * duration)
+  }, [focusedTtsClipId, ttsClips, duration, calloutTrackLineWidthPx, seekTo])
+
+  const nudgeFocusedTtsClip = useCallback(
+    (delta: -1 | 1) => {
+      if (focusedTtsClipId == null || duration <= 0 || calloutTrackLineWidthPx <= 1e-6) return
+
+      const clip = ttsClips.find((entry) => entry.id === focusedTtsClipId)
+      if (!clip) return
+
+      const coreWPx = getTtsClipCoreWidthForId(focusedTtsClipId)
+      const { minSec, maxSec } = getTtsClipNudgeBoundsSec(
+        focusedTtsClipId,
+        ttsClips,
+        calloutTrackLineWidthPx,
+        duration,
+        getTtsClipCoreWidthForId,
+      )
+      const currentSec = clip.centerNorm * duration
+      const nextSec = Math.min(maxSec, Math.max(minSec, currentSec + CALLOUT_NUDGE_STEP_SEC * delta))
+      if (Math.abs(nextSec - currentSec) <= 1e-6) return
+
+      const nextCenterNorm = nextSec / duration
+      setTtsClips((prev) =>
+        prev.map((entry) =>
+          entry.id === focusedTtsClipId ? { ...entry, centerNorm: nextCenterNorm } : entry,
+        ),
+      )
+
+      const startNorm = ttsClipPurpleStartNorm(nextCenterNorm, calloutTrackLineWidthPx, coreWPx)
+      setCurrentTime(startNorm * duration)
+      seekTo(startNorm * duration)
+    },
+    [focusedTtsClipId, duration, calloutTrackLineWidthPx, ttsClips, getTtsClipCoreWidthForId, seekTo],
+  )
+
+  const activeTourCallout = useMemo(() => {
+    if (activeCalloutGuideId == null) return null
+    const guideIndex = calloutGuides.findIndex((guide) => guide.id === activeCalloutGuideId)
+    return buildTourCalloutForIndex(guideIndex >= 0 ? guideIndex : 0)
+  }, [activeCalloutGuideId, calloutGuides])
+
+  const showTtsMicBadge = useMemo(() => {
+    if (focusedTtsClipId != null) return false
+    if (duration <= 0 || calloutTrackLineWidthPx <= 1e-6 || ttsClips.length === 0) return false
+    const playheadNorm = Math.min(1, Math.max(0, currentTime / duration))
+    return ttsClips.some((clip) =>
+      isPlayheadOverTtsClip(
+        playheadNorm,
+        clip.centerNorm,
+        calloutTrackLineWidthPx,
+        ttsClipCoreWidthPx(clip.expanded),
+      ),
+    )
+  }, [focusedTtsClipId, duration, calloutTrackLineWidthPx, ttsClips, currentTime])
+
+  const openTtsDialogueFromMicBadge = useCallback(() => {
+    if (duration <= 0 || calloutTrackLineWidthPx <= 1e-6) return
+    const playheadNorm = Math.min(1, Math.max(0, currentTime / duration))
+    const clip = ttsClips.find((entry) =>
+      isPlayheadOverTtsClip(
+        playheadNorm,
+        entry.centerNorm,
+        calloutTrackLineWidthPx,
+        ttsClipCoreWidthPx(entry.expanded),
+      ),
+    )
+    if (clip) focusTtsClip(clip)
+  }, [duration, calloutTrackLineWidthPx, ttsClips, currentTime, focusTtsClip])
+
+  const focusedTtsNudgeState = useMemo(() => {
+    if (focusedTtsClipId == null || duration <= 0 || calloutTrackLineWidthPx <= 1e-6) {
+      return { canNudgeLeft: false, canNudgeRight: false }
+    }
+
+    const clip = ttsClips.find((entry) => entry.id === focusedTtsClipId)
+    if (!clip) return { canNudgeLeft: false, canNudgeRight: false }
+
+    const { minSec, maxSec } = getTtsClipNudgeBoundsSec(
+      focusedTtsClipId,
+      ttsClips,
+      calloutTrackLineWidthPx,
+      duration,
+      getTtsClipCoreWidthForId,
+    )
+    const currentSec = clip.centerNorm * duration
+
+    return {
+      canNudgeLeft: currentSec > minSec + 1e-6,
+      canNudgeRight: currentSec < maxSec - 1e-6,
+    }
+  }, [focusedTtsClipId, duration, calloutTrackLineWidthPx, ttsClips, getTtsClipCoreWidthForId])
+
   const activeCalloutNudgeState = useMemo(() => {
-    if (activeCalloutDotIndex == null || duration <= 0 || calloutTrackLineWidthPx <= 1e-6) {
+    if (activeCalloutGuideId == null || duration <= 0 || calloutTrackLineWidthPx <= 1e-6) {
       return {
         canNudgeLeft: false,
         canNudgeRight: false,
@@ -851,26 +1618,32 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
       }
     }
 
-    const index = activeCalloutDotIndex
-    const lineW = calloutTrackLineWidthPx
+    const guide = calloutGuides.find((entry) => entry.id === activeCalloutGuideId)
+    if (!guide) {
+      return {
+        canNudgeLeft: false,
+        canNudgeRight: false,
+        focusChromeStyle: undefined as CSSProperties | undefined,
+      }
+    }
+
     const { minSec, maxSec } = getCalloutNudgeBoundsSec(
-      index,
-      calloutTimeNudgesSec,
-      lineW,
+      activeCalloutGuideId,
+      calloutGuides,
+      calloutTrackLineWidthPx,
       duration,
     )
-    const currentSec =
-      getCalloutEffectiveNorm(index, calloutTimeNudgesSec, lineW, duration) * duration
+    const currentSec = guide.centerNorm * duration
 
     return {
       canNudgeLeft: currentSec > minSec + 1e-6,
       canNudgeRight: currentSec < maxSec - 1e-6,
       focusChromeStyle: calloutFocusChromeAnchorStyleFromNorm(
-        getCalloutEffectiveNorm(index, calloutTimeNudgesSec, lineW, duration),
-        lineW,
+        guide.centerNorm,
+        calloutTrackLineWidthPx,
       ),
     }
-  }, [activeCalloutDotIndex, calloutTimeNudgesSec, calloutTrackLineWidthPx, duration])
+  }, [activeCalloutGuideId, calloutGuides, calloutTrackLineWidthPx, duration])
 
   const playheadTrackStyle = useMemo(
     (): CSSProperties => ({
@@ -1093,8 +1866,11 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                 />
                 {activeTourCallout ? (
                   <div
-                    key={`tour-callout-${activeCalloutDotIndex}`}
-                    className="video-editor__tour-callout-layer"
+                    key={`tour-callout-${activeCalloutGuideId}`}
+                    className={
+                      'video-editor__tour-callout-layer' +
+                      (focusedTtsClipId != null ? ' video-editor__tour-callout-layer--tts-dimmed' : '')
+                    }
                     aria-live="polite"
                   >
                     <div
@@ -1125,6 +1901,52 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                     </div>
                   </div>
                 ) : null}
+                {showTtsMicBadge ? (
+                  <div className="video-editor__tts-mic-badge-layer">
+                    <button
+                      type="button"
+                      className="video-editor__tts-mic-badge-hit"
+                      aria-label="Open text to speech editor"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openTtsDialogueFromMicBadge()
+                      }}
+                    >
+                      <img
+                        className="video-editor__tts-mic-badge"
+                        src={`${import.meta.env.BASE_URL}images/tts-mic-badge.png`}
+                        alt=""
+                        draggable={false}
+                      />
+                    </button>
+                  </div>
+                ) : null}
+                {focusedTtsClipId != null ? (
+                  <div
+                    className="video-editor__tts-dialogue-layer"
+                    role="dialog"
+                    aria-label="Text to speech editor"
+                  >
+                    <button
+                      type="button"
+                      className="video-editor__tts-dialogue-hit"
+                      aria-label="Extend text to speech clip on timeline"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleTtsDialogueBubbleSize()
+                      }}
+                    >
+                      <img
+                        className="video-editor__tts-dialogue"
+                        src={`${import.meta.env.BASE_URL}images/tts-dialogue.png`}
+                        alt=""
+                        draggable={false}
+                      />
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
           )}
@@ -1134,7 +1956,32 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
 
       <div className="video-editor__transport-timeline-stack">
         <div className="video-editor__timeline-toolbar" role="toolbar" aria-label="Editor tools">
-          <div className="video-editor__timeline-toolbar-group">
+          <div className="video-editor__timeline-toolbar-start">
+            <div className="video-editor__timeline-toolbar-voice">
+              <RecordVoiceOverRoundedIcon
+                className="video-editor__timeline-toolbar-voice-icon"
+                aria-hidden
+              />
+              <Tooltip title="Tour voice" placement="top" disableInteractive enterDelay={400}>
+                <button
+                  type="button"
+                  className="video-editor__timeline-toolbar-voice-toggle"
+                  role="switch"
+                  aria-pressed={tourVoiceEnabled}
+                  aria-label="Tour voice"
+                  onClick={() => setTourVoiceEnabled((enabled) => !enabled)}
+                >
+                  <span className="video-editor__timeline-toolbar-voice-toggle-track" aria-hidden>
+                    <span className="video-editor__timeline-toolbar-voice-toggle-handle">
+                      {tourVoiceEnabled ? (
+                        <CheckRoundedIcon className="video-editor__timeline-toolbar-voice-toggle-check" aria-hidden />
+                      ) : null}
+                    </span>
+                  </span>
+                </button>
+              </Tooltip>
+            </div>
+            <span className="video-editor__timeline-toolbar-separator" aria-hidden />
             <button type="button" className="video-editor__timeline-toolbar-consensus">
               <img
                 src={`${import.meta.env.BASE_URL}images/ai-sparkle.svg`}
@@ -1146,24 +1993,123 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
               />
               <span>Consensus Ai</span>
             </button>
-            <span className="video-editor__timeline-toolbar-separator" aria-hidden />
+          </div>
+          <div className="video-editor__timeline-toolbar-center">
+            <div className="video-editor__timeline-toolbar-transport-anchor">
+              <div className="video-editor__timeline-toolbar-transport-tube">
+                <div
+                  className="video-editor__timeline-toolbar-transport"
+                  role="group"
+                  aria-label="Segment playback"
+                >
+              <Tooltip title="Previous segment" placement="top" disableInteractive enterDelay={400}>
+                <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
+                  <button
+                    type="button"
+                    className="video-editor__timeline-toolbar-transport-btn"
+                    aria-label="Previous segment"
+                    disabled={loadError || duration <= 0 || !canSkipSegmentBack}
+                    onClick={skipToPreviousSegment}
+                  >
+                    <SkipPreviousRoundedIcon fontSize="small" aria-hidden />
+                  </button>
+                </span>
+              </Tooltip>
+              <Tooltip title="Rewind playhead" placement="top" disableInteractive enterDelay={400}>
+                <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
+                  <button
+                    type="button"
+                    className="video-editor__timeline-toolbar-transport-btn"
+                    aria-label="Rewind playhead"
+                    disabled={!canNudgePlayheadBack}
+                    onClick={nudgePlayheadBack}
+                  >
+                    <FastRewindRoundedIcon fontSize="small" aria-hidden />
+                  </button>
+                </span>
+              </Tooltip>
+              <Tooltip
+                title={isVideoPlaying ? 'Pause segment' : 'Play segment'}
+                placement="top"
+                disableInteractive
+                enterDelay={400}
+              >
+                <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
+                  <button
+                    type="button"
+                    className={
+                      'video-editor__timeline-toolbar-transport-btn video-editor__timeline-toolbar-transport-btn--play'
+                    }
+                    aria-label={isVideoPlaying ? 'Pause segment' : 'Play segment'}
+                    disabled={loadError || duration <= 0 || timelineSegments.length === 0}
+                    onClick={toggleSegmentPlayback}
+                  >
+                    {isVideoPlaying ? (
+                      <PauseRoundedIcon fontSize="small" aria-hidden />
+                    ) : (
+                      <PlayArrowRoundedIcon fontSize="small" aria-hidden />
+                    )}
+                  </button>
+                </span>
+              </Tooltip>
+              <Tooltip title="Fast forward playhead" placement="top" disableInteractive enterDelay={400}>
+                <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
+                  <button
+                    type="button"
+                    className="video-editor__timeline-toolbar-transport-btn"
+                    aria-label="Fast forward playhead"
+                    disabled={!canNudgePlayheadForward}
+                    onClick={nudgePlayheadForward}
+                  >
+                    <FastForwardRoundedIcon fontSize="small" aria-hidden />
+                  </button>
+                </span>
+              </Tooltip>
+              <Tooltip title="Next segment" placement="top" disableInteractive enterDelay={400}>
+                <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
+                  <button
+                    type="button"
+                    className="video-editor__timeline-toolbar-transport-btn"
+                    aria-label="Next segment"
+                    disabled={loadError || duration <= 0 || !canSkipSegmentForward}
+                    onClick={skipToNextSegment}
+                  >
+                    <SkipNextRoundedIcon fontSize="small" aria-hidden />
+                  </button>
+                </span>
+              </Tooltip>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="video-editor__timeline-toolbar-end">
             <div className="video-editor__timeline-toolbar-actions">
-              <button type="button" className="video-editor__timeline-toolbar-btn">
+              <button
+                type="button"
+                className="video-editor__timeline-toolbar-btn"
+                disabled={!canAddCalloutGuide}
+                onClick={addCalloutGuide}
+              >
                 <ChatAddOnOutlined className="video-editor__timeline-toolbar-btn-icon" fontSize="small" aria-hidden />
-                Add Guide
+                Add Callout
               </button>
               <span className="video-editor__timeline-toolbar-separator" aria-hidden />
-              <button type="button" className="video-editor__timeline-toolbar-btn">
+              <button
+                type="button"
+                className="video-editor__timeline-toolbar-btn"
+                disabled={!canAddTtsClip}
+                onClick={addTtsClip}
+              >
                 <MicNoneRoundedIcon className="video-editor__timeline-toolbar-btn-icon" fontSize="small" aria-hidden />
                 Add text to speech
               </button>
+              <span className="video-editor__timeline-toolbar-separator" aria-hidden />
             </div>
-          </div>
-          <div
-            className="video-editor__timeline-toolbar-scrim"
-            aria-label="Timeline zoom"
-            role="group"
-          >
+            <div
+              className="video-editor__timeline-toolbar-scrim"
+              aria-label="Timeline zoom"
+              role="group"
+            >
             <button
               type="button"
               className="video-editor__timeline-toolbar-scrim-btn"
@@ -1194,6 +2140,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
             >
               <ZoomInOutlinedIcon className="video-editor__timeline-toolbar-scrim-icon" fontSize="small" aria-hidden />
             </button>
+            </div>
           </div>
         </div>
 
@@ -1220,13 +2167,13 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                 onLostPointerCapture={onTimelineStripLostPointerCapture}
                 onKeyDown={(e) => {
                   if (loadError || duration <= 0) return
-                  const step = e.shiftKey ? 5 : 1
+                  const step = e.shiftKey ? 5 : PLAYHEAD_NUDGE_STEP_SEC
                   if (e.key === 'ArrowLeft') {
                     e.preventDefault()
-                    seekTo(currentTime - step)
+                    nudgePlayhead(-1, step)
                   } else if (e.key === 'ArrowRight') {
                     e.preventDefault()
-                    seekTo(currentTime + step)
+                    nudgePlayhead(1, step)
                   } else if (e.key === 'Home') {
                     e.preventDefault()
                     seekTo(0)
@@ -1287,7 +2234,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                       <div
                         className={
                           'video-editor__timeline-track video-editor__timeline-track--callouts' +
-                          (activeCalloutDotIndex != null
+                          (activeCalloutGuideId != null
                             ? ' video-editor__timeline-track--callouts-focused'
                             : '')
                         }
@@ -1309,12 +2256,12 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                             <div
                               className={
                                 'video-editor__timeline-callout-focus-chrome' +
-                                (activeCalloutDotIndex != null
+                                (activeCalloutGuideId != null
                                   ? ' video-editor__timeline-callout-focus-chrome--visible'
                                   : '')
                               }
                               style={
-                                activeCalloutDotIndex != null
+                                activeCalloutGuideId != null
                                   ? activeCalloutNudgeState.focusChromeStyle
                                   : undefined
                               }
@@ -1335,7 +2282,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                         className="video-editor__timeline-callout-nav video-editor__timeline-callout-nav--prev"
                                         aria-label="Nudge left"
                                         disabled={
-                                          activeCalloutDotIndex == null ||
+                                          activeCalloutGuideId == null ||
                                           !activeCalloutNudgeState.canNudgeLeft
                                         }
                                         onPointerDown={(e) => e.stopPropagation()}
@@ -1367,7 +2314,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                         className="video-editor__timeline-callout-nav video-editor__timeline-callout-nav--next"
                                         aria-label="Nudge right"
                                         disabled={
-                                          activeCalloutDotIndex == null ||
+                                          activeCalloutGuideId == null ||
                                           !activeCalloutNudgeState.canNudgeRight
                                         }
                                         onPointerDown={(e) => e.stopPropagation()}
@@ -1383,29 +2330,28 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                 </div>
                               </div>
                             </div>
-                            {CALLOUT_MARKER_PCTS.map((_baseLeftPct, index) => {
+                            {calloutGuides.map((guide) => {
                               const dotAnchorStyle =
                                 calloutTrackLineWidthPx > 1e-6 && duration > 0
                                   ? calloutFocusChromeAnchorStyleFromNorm(
-                                      getCalloutEffectiveNorm(
-                                        index,
-                                        calloutTimeNudgesSec,
-                                        calloutTrackLineWidthPx,
-                                        duration,
-                                      ),
+                                      guide.centerNorm,
                                       calloutTrackLineWidthPx,
                                     )
                                   : undefined
-                              const isActive = activeCalloutDotIndex === index
-                              const selectedSpeed = calloutSpeedByIndex[index] ?? '1'
+                              const isActive = activeCalloutGuideId === guide.id
+                              const selectedSpeed = calloutSpeedByGuideId[guide.id] ?? '1'
+                              const selectedSpeedIndex = calloutSpeedIndex(selectedSpeed)
+                              const canCycleSpeedUp =
+                                selectedSpeedIndex < CALLOUT_SPEED_OPTIONS.length - 1
+                              const canCycleSpeedDown = selectedSpeedIndex > 0
                               return (
                               <span
-                                key={`callout-${index}`}
+                                key={guide.id}
                                 className={
                                   'video-editor__timeline-callout-dot' +
                                   (isActive
                                     ? ' video-editor__timeline-callout-dot--active'
-                                    : visitedCalloutDots.has(index)
+                                    : visitedCalloutGuideIds.has(guide.id)
                                       ? ' video-editor__timeline-callout-dot--visited'
                                       : '')
                                 }
@@ -1445,9 +2391,9 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                               onPointerDown={(e) => e.stopPropagation()}
                                               onClick={(e) => {
                                                 e.stopPropagation()
-                                                setCalloutSpeedByIndex((prev) => ({
+                                                setCalloutSpeedByGuideId((prev) => ({
                                                   ...prev,
-                                                  [index]: option.id,
+                                                  [guide.id]: option.id,
                                                 }))
                                                 setCalloutSpeedMenuOpen(false)
                                               }}
@@ -1484,19 +2430,30 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                       </div>
                                     ) : null}
                                     <div className="video-editor__timeline-callout-focus-badge">
-                                      {selectedSpeed === 'skip' ? (
-                                        <VisibilityOffOutlinedIcon
-                                          className="video-editor__timeline-callout-focus-skip-icon"
-                                          aria-hidden
-                                        />
-                                      ) : (
-                                        <span className="video-editor__timeline-callout-focus-label">
-                                          {calloutSpeedDisplay(selectedSpeed)}
-                                        </span>
-                                      )}
                                       <button
                                         type="button"
-                                        className="video-editor__timeline-callout-focus-chevron-btn"
+                                        className="video-editor__timeline-callout-focus-step-btn video-editor__timeline-callout-focus-step-btn--up"
+                                        aria-label="Faster callout speed"
+                                        disabled={!canCycleSpeedUp}
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setCalloutSpeedMenuOpen(false)
+                                          setCalloutSpeedByGuideId((prev) => ({
+                                            ...prev,
+                                            [guide.id]: cycleCalloutSpeed(selectedSpeed, 1),
+                                          }))
+                                        }}
+                                      >
+                                        <ArrowDropUpIcon
+                                          className="video-editor__timeline-callout-focus-step-icon"
+                                          fontSize="inherit"
+                                          aria-hidden
+                                        />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="video-editor__timeline-callout-focus-label-btn"
                                         aria-label="Callout speed menu"
                                         aria-expanded={calloutSpeedMenuOpen}
                                         aria-haspopup="menu"
@@ -1506,8 +2463,34 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                           setCalloutSpeedMenuOpen((open) => !open)
                                         }}
                                       >
-                                        <KeyboardArrowDownRoundedIcon
-                                          className="video-editor__timeline-callout-focus-chevron"
+                                        {selectedSpeed === 'skip' ? (
+                                          <VisibilityOffOutlinedIcon
+                                            className="video-editor__timeline-callout-focus-skip-icon"
+                                            aria-hidden
+                                          />
+                                        ) : (
+                                          <span className="video-editor__timeline-callout-focus-label">
+                                            {calloutSpeedDisplay(selectedSpeed)}
+                                          </span>
+                                        )}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="video-editor__timeline-callout-focus-step-btn video-editor__timeline-callout-focus-step-btn--down"
+                                        aria-label="Slower callout speed"
+                                        disabled={!canCycleSpeedDown}
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          setCalloutSpeedMenuOpen(false)
+                                          setCalloutSpeedByGuideId((prev) => ({
+                                            ...prev,
+                                            [guide.id]: cycleCalloutSpeed(selectedSpeed, -1),
+                                          }))
+                                        }}
+                                      >
+                                        <ArrowDropDownIcon
+                                          className="video-editor__timeline-callout-focus-step-icon"
                                           fontSize="inherit"
                                           aria-hidden
                                         />
@@ -1520,19 +2503,122 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                           </div>
                         </div>
                       </div>
-                      <div className="video-editor__timeline-track video-editor__timeline-track--tts">
+                      <div
+                        className={
+                          'video-editor__timeline-track video-editor__timeline-track--tts' +
+                          (focusedTtsClipId != null ? ' video-editor__timeline-track--tts-focused' : '')
+                        }
+                      >
                         <div className="video-editor__timeline-track-inner">
                           <span className="video-editor__timeline-track-icon" aria-hidden>
                             <MicNoneRoundedIcon className="video-editor__timeline-track-icon-svg" fontSize="small" />
                           </span>
-                          <button
-                            type="button"
-                            className="video-editor__timeline-tts-placeholder"
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={(e) => e.stopPropagation()}
+                          <div
+                            className={
+                              'video-editor__timeline-track-line video-editor__timeline-track-line--tts' +
+                              (ttsClips.length > 0 ? ' video-editor__timeline-track-line--tts-active' : '')
+                            }
+                            aria-label="Text to speech"
                           >
-                            Add text to speech
-                          </button>
+                            <button
+                              type="button"
+                              className="video-editor__timeline-tts-placeholder"
+                              disabled={!canAddTtsClip}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                addTtsClip()
+                              }}
+                            >
+                              Add text to speech
+                            </button>
+                            {ttsClips.map((clip) => (
+                              <div
+                                key={clip.id}
+                                className={
+                                  'video-editor__timeline-tts-clip' +
+                                  (clip.expanded ? ' video-editor__timeline-tts-clip--expanded' : '') +
+                                  (focusedTtsClipId === clip.id
+                                    ? ' video-editor__timeline-tts-clip--focused'
+                                    : '')
+                                }
+                                style={{ left: `${clip.centerNorm * 100}%` }}
+                                role="group"
+                                aria-label="Text to speech clip"
+                                onPointerDown={(e) => {
+                                  e.stopPropagation()
+                                  focusTtsClip(clip)
+                                }}
+                              >
+                                <div className="video-editor__timeline-tts-clip-wing video-editor__timeline-tts-clip-wing--left">
+                                  <Tooltip
+                                    title="Nudge left"
+                                    placement="top"
+                                    disableInteractive
+                                    enterDelay={400}
+                                    enterNextDelay={400}
+                                  >
+                                    <span className="video-editor__timeline-callout-nav-tooltip-wrap">
+                                      <button
+                                        type="button"
+                                        className="video-editor__timeline-callout-nav video-editor__timeline-callout-nav--prev"
+                                        aria-label="Nudge left"
+                                        disabled={
+                                          focusedTtsClipId !== clip.id || !focusedTtsNudgeState.canNudgeLeft
+                                        }
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          nudgeFocusedTtsClip(-1)
+                                        }}
+                                      >
+                                        <ChevronLeftRoundedIcon fontSize="small" aria-hidden />
+                                      </button>
+                                    </span>
+                                  </Tooltip>
+                                </div>
+                                <span className="video-editor__timeline-tts-clip-core">
+                                  <span className="video-editor__timeline-tts-clip-wave" aria-hidden>
+                                    {Array.from({ length: ttsWaveBarCount(clip.expanded) }, (_, barIndex) => (
+                                      <span
+                                        key={barIndex}
+                                        style={{
+                                          height: `${TTS_WAVE_BAR_HEIGHTS_PX[barIndex % TTS_WAVE_BAR_COUNT]}px`,
+                                        }}
+                                      />
+                                    ))}
+                                  </span>
+                                </span>
+                                <div className="video-editor__timeline-tts-clip-wing video-editor__timeline-tts-clip-wing--right">
+                                  <Tooltip
+                                    title="Nudge right"
+                                    placement="top"
+                                    disableInteractive
+                                    enterDelay={400}
+                                    enterNextDelay={400}
+                                  >
+                                    <span className="video-editor__timeline-callout-nav-tooltip-wrap">
+                                      <button
+                                        type="button"
+                                        className="video-editor__timeline-callout-nav video-editor__timeline-callout-nav--next"
+                                        aria-label="Nudge right"
+                                        disabled={
+                                          focusedTtsClipId !== clip.id || !focusedTtsNudgeState.canNudgeRight
+                                        }
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          nudgeFocusedTtsClip(1)
+                                        }}
+                                      >
+                                        <ChevronRightRoundedIcon fontSize="small" aria-hidden />
+                                      </button>
+                                    </span>
+                                  </Tooltip>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     </div>
