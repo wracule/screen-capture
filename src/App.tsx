@@ -11,6 +11,9 @@ export function App() {
         onDone={() => {
           /* Prototype entry point — wire up navigation when capture flow is added. */
         }}
+        onSave={() => {
+          /* Prototype entry point — wire up save when capture flow is added. */
+        }}
         onDelete={() => {
           /* Prototype entry point — wire up navigation when capture flow is added. */
         }}

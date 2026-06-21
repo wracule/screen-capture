@@ -135,18 +135,6 @@
   color: #f4f7ff;
 }
 
-.video-editor__done {
-  padding: 0.45rem 1rem;
-  border-radius: 999px;
-  border: 1px solid #e07840;
-  background: #ff9356;
-  color: #0d0d0d;
-  font-size: 0.84rem;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-}
-
 .video-editor__top-actions {
   justify-self: end;
   display: inline-flex;
@@ -163,7 +151,7 @@
   gap: 0.35rem;
   padding: 0.45rem 0.85rem;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.72);
+  border: none;
   background: transparent;
   color: #f4f7ff;
   font-size: 0.84rem;
@@ -174,7 +162,6 @@
 
 .video-editor__duplicate-session:hover {
   background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.88);
   color: #ffffff;
 }
 
@@ -183,7 +170,53 @@
   color: currentColor;
 }
 
-.video-editor__done:hover {
+.video-editor__preview-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  border: 1px solid #ff9356;
+  background: transparent;
+  color: #ff9356;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.video-editor__preview-btn:hover {
+  background: rgba(255, 147, 86, 0.12);
+  border-color: #ffa571;
+  color: #ffa571;
+}
+
+.video-editor__preview-btn-icon {
+  flex-shrink: 0;
+  color: currentColor;
+}
+
+.video-editor__save-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 1rem;
+  border-radius: 999px;
+  border: 1px solid #e07840;
+  background: #ff9356;
+  color: #0d0d0d;
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.video-editor__save-btn:hover {
   background: #ffa571;
   border-color: #ff9356;
   filter: none;
@@ -2908,7 +2941,8 @@
   }
 
   .video-editor__top-actions .video-editor__duplicate-session,
-  .video-editor__top-actions .video-editor__done {
+  .video-editor__top-actions .video-editor__preview-btn,
+  .video-editor__top-actions .video-editor__save-btn {
     flex: 1;
     justify-content: center;
   }

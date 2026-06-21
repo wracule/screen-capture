@@ -20,6 +20,7 @@ import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded'
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown'
 import ArrowDropUpIcon from '@mui/icons-material/ArrowDropUp'
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded'
+import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined'
 import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined'
 import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded'
 import PauseRoundedIcon from '@mui/icons-material/PauseRounded'
@@ -35,6 +36,7 @@ import './VideoEditorView.css'
 type VideoEditorViewProps = {
   videoSrc: string
   onDone: () => void
+  onSave: () => void
   onDelete: () => void
 }
 
@@ -679,7 +681,7 @@ function isRulerLabelAtEnd(tSec: number, durationSec: number): boolean {
   return durationSec > 0 && Math.abs(tSec - durationSec) <= 1e-3
 }
 
-export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewProps) {
+export function VideoEditorView({ videoSrc, onDone, onSave, onDelete }: VideoEditorViewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
   /** Ruler tick / label layout; scrub fallback when playhead overlay is not mounted yet. */
@@ -1814,8 +1816,12 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
             <ContentCopyOutlinedIcon className="video-editor__duplicate-session-icon" fontSize="small" aria-hidden />
             Duplicate
           </button>
-          <button type="button" className="video-editor__done" onClick={onDone}>
+          <button type="button" className="video-editor__preview-btn" onClick={onDone}>
             Preview
+            <VisibilityOutlinedIcon className="video-editor__preview-btn-icon" fontSize="small" aria-hidden />
+          </button>
+          <button type="button" className="video-editor__save-btn" onClick={onSave}>
+            Save
           </button>
         </div>
       </header>
