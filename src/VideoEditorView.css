@@ -18,6 +18,7 @@
   --video-editor-transport-round-btn-size: 32px;
   --video-editor-transport-round-icon-size: 17px;
   --video-editor-transport-play-cluster-margin-inline: 40px;
+  --video-editor-timeline-toolbar-action-btn-width: 9.5rem;
   --video-editor-transport-time-font-size: 0.73rem;
   --video-editor-transport-time-gap: 0.5rem;
   --video-editor-transport-actions-gap: 12px;
@@ -1069,13 +1070,56 @@
   flex-shrink: 0;
   box-sizing: border-box;
   overflow: visible;
-  padding: 2px 18px;
+  padding: 2px 14px;
   border: 1px solid #5c5c5c;
   border-radius: 999px;
   background: #1a1a1a;
   box-shadow:
     inset 0 0 0 1px rgba(0, 0, 0, 0.45),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.video-editor__timeline-toolbar-transport .video-editor__timeline-toolbar-separator {
+  margin-inline: 0.5rem;
+}
+
+.video-editor__timeline-toolbar-transport .video-editor__timeline-toolbar-btn {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: var(--video-editor-timeline-toolbar-action-btn-width);
+  padding-inline: 0.45rem;
+  justify-content: center;
+}
+
+.video-editor__timeline-toolbar-transport-play-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-shrink: 0;
+}
+
+.video-editor__timeline-toolbar-transport-play-cluster .video-editor__timeline-toolbar-transport-btn--play {
+  margin-inline: 0;
+}
+
+.video-editor__timeline-toolbar-transport-time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: var(--video-editor-transport-time-font-size);
+  line-height: 1;
+  min-width: 2.35rem;
+}
+
+.video-editor__timeline-toolbar-transport-time--current {
+  font-weight: 700;
+  color: #ff9356;
+  text-align: right;
+}
+
+.video-editor__timeline-toolbar-transport-time--total {
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: left;
 }
 
 .video-editor__timeline-toolbar-transport {
@@ -2870,19 +2914,20 @@
   }
 }
 
-/* MUI Tooltip (portaled): black surface, extra-bold legible copy. */
+/* MUI Tooltip (portaled): black surface, bold high-legibility copy. */
 .MuiTooltip-tooltip {
   background-color: #000 !important;
   color: #fff !important;
-  font-weight: 800;
-  font-size: 0.875rem;
-  line-height: 1.45;
+  font-weight: 900;
+  font-size: 0.9375rem;
+  line-height: 1.35;
   letter-spacing: 0.02em;
   padding: 8px 14px !important;
-  max-width: min(280px, 90vw);
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  max-width: min(320px, 90vw);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+  text-rendering: geometricPrecision;
+  text-shadow: 0 0 0.75px rgba(255, 255, 255, 0.85);
 }
 
 .MuiTooltip-tooltip .MuiTooltip-arrow {

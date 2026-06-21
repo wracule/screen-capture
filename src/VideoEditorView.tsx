@@ -1906,7 +1906,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                     <button
                       type="button"
                       className="video-editor__tts-mic-badge-hit"
-                      aria-label="Open text to speech editor"
+                      aria-label="Open voiceover editor"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation()
@@ -1926,12 +1926,12 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                   <div
                     className="video-editor__tts-dialogue-layer"
                     role="dialog"
-                    aria-label="Text to speech editor"
+                    aria-label="Voiceover editor"
                   >
                     <button
                       type="button"
                       className="video-editor__tts-dialogue-hit"
-                      aria-label="Extend text to speech clip on timeline"
+                      aria-label="Extend voiceover clip on timeline"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation()
@@ -2000,8 +2000,27 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                 <div
                   className="video-editor__timeline-toolbar-transport"
                   role="group"
-                  aria-label="Segment playback"
+                  aria-label="Timeline playback and editing"
                 >
+              <Tooltip
+                title={`Add callout at ${formatRulerLabel(currentTime)}`}
+                placement="top"
+                disableInteractive
+                enterDelay={400}
+              >
+                <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
+                  <button
+                    type="button"
+                    className="video-editor__timeline-toolbar-btn"
+                    disabled={!canAddCalloutGuide}
+                    onClick={addCalloutGuide}
+                  >
+                    <ChatAddOnOutlined className="video-editor__timeline-toolbar-btn-icon" fontSize="small" aria-hidden />
+                    Add callout
+                  </button>
+                </span>
+              </Tooltip>
+              <span className="video-editor__timeline-toolbar-separator" aria-hidden />
               <Tooltip title="Previous segment" placement="top" disableInteractive enterDelay={400}>
                 <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
                   <button
@@ -2028,30 +2047,47 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                   </button>
                 </span>
               </Tooltip>
-              <Tooltip
-                title={isVideoPlaying ? 'Pause segment' : 'Play segment'}
-                placement="top"
-                disableInteractive
-                enterDelay={400}
+              <span
+                className="video-editor__timeline-toolbar-transport-play-cluster"
+                aria-label={`${formatRulerLabel(currentTime)} of ${formatRulerLabel(duration)}`}
               >
-                <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
-                  <button
-                    type="button"
-                    className={
-                      'video-editor__timeline-toolbar-transport-btn video-editor__timeline-toolbar-transport-btn--play'
-                    }
-                    aria-label={isVideoPlaying ? 'Pause segment' : 'Play segment'}
-                    disabled={loadError || duration <= 0 || timelineSegments.length === 0}
-                    onClick={toggleSegmentPlayback}
-                  >
-                    {isVideoPlaying ? (
-                      <PauseRoundedIcon fontSize="small" aria-hidden />
-                    ) : (
-                      <PlayArrowRoundedIcon fontSize="small" aria-hidden />
-                    )}
-                  </button>
+                <span
+                  className="video-editor__timeline-toolbar-transport-time video-editor__timeline-toolbar-transport-time--current"
+                  aria-hidden
+                >
+                  {formatRulerLabel(currentTime)}
                 </span>
-              </Tooltip>
+                <Tooltip
+                  title={isVideoPlaying ? 'Pause segment' : 'Play segment'}
+                  placement="top"
+                  disableInteractive
+                  enterDelay={400}
+                >
+                  <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
+                    <button
+                      type="button"
+                      className={
+                        'video-editor__timeline-toolbar-transport-btn video-editor__timeline-toolbar-transport-btn--play'
+                      }
+                      aria-label={isVideoPlaying ? 'Pause segment' : 'Play segment'}
+                      disabled={loadError || duration <= 0 || timelineSegments.length === 0}
+                      onClick={toggleSegmentPlayback}
+                    >
+                      {isVideoPlaying ? (
+                        <PauseRoundedIcon fontSize="small" aria-hidden />
+                      ) : (
+                        <PlayArrowRoundedIcon fontSize="small" aria-hidden />
+                      )}
+                    </button>
+                  </span>
+                </Tooltip>
+                <span
+                  className="video-editor__timeline-toolbar-transport-time video-editor__timeline-toolbar-transport-time--total"
+                  aria-hidden
+                >
+                  {formatRulerLabel(duration)}
+                </span>
+              </span>
               <Tooltip title="Fast forward playhead" placement="top" disableInteractive enterDelay={400}>
                 <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
                   <button
@@ -2078,33 +2114,30 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                   </button>
                 </span>
               </Tooltip>
+              <span className="video-editor__timeline-toolbar-separator" aria-hidden />
+              <Tooltip
+                title={`Add voiceover at ${formatRulerLabel(currentTime)}`}
+                placement="top"
+                disableInteractive
+                enterDelay={400}
+              >
+                <span className="video-editor__timeline-toolbar-transport-tooltip-wrap">
+                  <button
+                    type="button"
+                    className="video-editor__timeline-toolbar-btn"
+                    disabled={!canAddTtsClip}
+                    onClick={addTtsClip}
+                  >
+                    <MicNoneRoundedIcon className="video-editor__timeline-toolbar-btn-icon" fontSize="small" aria-hidden />
+                    Add voiceover
+                  </button>
+                </span>
+              </Tooltip>
                 </div>
               </div>
             </div>
           </div>
           <div className="video-editor__timeline-toolbar-end">
-            <div className="video-editor__timeline-toolbar-actions">
-              <button
-                type="button"
-                className="video-editor__timeline-toolbar-btn"
-                disabled={!canAddCalloutGuide}
-                onClick={addCalloutGuide}
-              >
-                <ChatAddOnOutlined className="video-editor__timeline-toolbar-btn-icon" fontSize="small" aria-hidden />
-                Add Callout
-              </button>
-              <span className="video-editor__timeline-toolbar-separator" aria-hidden />
-              <button
-                type="button"
-                className="video-editor__timeline-toolbar-btn"
-                disabled={!canAddTtsClip}
-                onClick={addTtsClip}
-              >
-                <MicNoneRoundedIcon className="video-editor__timeline-toolbar-btn-icon" fontSize="small" aria-hidden />
-                Add text to speech
-              </button>
-              <span className="video-editor__timeline-toolbar-separator" aria-hidden />
-            </div>
             <div
               className="video-editor__timeline-toolbar-scrim"
               aria-label="Timeline zoom"
@@ -2246,7 +2279,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                           <div
                             ref={calloutTrackLineRef}
                             className="video-editor__timeline-track-line video-editor__timeline-track-line--callouts"
-                            aria-label="Callouts"
+                            aria-label="callouts"
                           >
                             <div
                               className="video-editor__timeline-callout-line-fill"
@@ -2372,7 +2405,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                       <div
                                         className="video-editor__timeline-callout-speed-menu"
                                         role="menu"
-                                        aria-label="Callout speed"
+                                        aria-label="callout speed"
                                       >
                                         {CALLOUT_SPEED_OPTIONS.map((option) => {
                                           const isSelected = selectedSpeed === option.id
@@ -2454,7 +2487,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                       <button
                                         type="button"
                                         className="video-editor__timeline-callout-focus-label-btn"
-                                        aria-label="Callout speed menu"
+                                        aria-label="callout speed menu"
                                         aria-expanded={calloutSpeedMenuOpen}
                                         aria-haspopup="menu"
                                         onPointerDown={(e) => e.stopPropagation()}
@@ -2518,7 +2551,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                               'video-editor__timeline-track-line video-editor__timeline-track-line--tts' +
                               (ttsClips.length > 0 ? ' video-editor__timeline-track-line--tts-active' : '')
                             }
-                            aria-label="Text to speech"
+                            aria-label="Voiceover"
                           >
                             <button
                               type="button"
@@ -2530,7 +2563,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                 addTtsClip()
                               }}
                             >
-                              Add text to speech
+                              Add voiceover
                             </button>
                             {ttsClips.map((clip) => (
                               <div
@@ -2544,7 +2577,7 @@ export function VideoEditorView({ videoSrc, onDone, onDelete }: VideoEditorViewP
                                 }
                                 style={{ left: `${clip.centerNorm * 100}%` }}
                                 role="group"
-                                aria-label="Text to speech clip"
+                                aria-label="Voiceover clip"
                                 onPointerDown={(e) => {
                                   e.stopPropagation()
                                   focusTtsClip(clip)
