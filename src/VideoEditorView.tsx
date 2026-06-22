@@ -1807,22 +1807,57 @@ export function VideoEditorView({ videoSrc, onDone, onSave, onDelete }: VideoEdi
           <span className="video-editor__brand-text">Dynamic Tour</span>
         </div>
         <div className="video-editor__top-actions">
-          <button
-            type="button"
-            className="video-editor__duplicate-session"
-            onClick={onDelete}
-            aria-label="Duplicate recording"
-          >
-            <ContentCopyOutlinedIcon className="video-editor__duplicate-session-icon" fontSize="small" aria-hidden />
-            Duplicate
-          </button>
-          <button type="button" className="video-editor__preview-btn" onClick={onDone}>
-            Preview
-            <VisibilityOutlinedIcon className="video-editor__preview-btn-icon" fontSize="small" aria-hidden />
-          </button>
-          <button type="button" className="video-editor__save-btn" onClick={onSave}>
-            Save
-          </button>
+          <div className="video-editor__top-actions-history" role="group" aria-label="History">
+            <button
+              type="button"
+              className="video-editor__top-history-btn"
+              aria-label="Undo"
+              aria-disabled="true"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/undo.png`}
+                alt=""
+                className="video-editor__top-history-btn-icon"
+                width={22}
+                height={22}
+                aria-hidden
+              />
+            </button>
+            <button
+              type="button"
+              className="video-editor__top-history-btn"
+              aria-label="Redo"
+              aria-disabled="true"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/redo.png`}
+                alt=""
+                className="video-editor__top-history-btn-icon"
+                width={22}
+                height={22}
+                aria-hidden
+              />
+            </button>
+          </div>
+          <span className="video-editor__top-actions-pipe" aria-hidden />
+          <div className="video-editor__top-actions-primary">
+            <button
+              type="button"
+              className="video-editor__duplicate-session"
+              onClick={onDelete}
+              aria-label="Duplicate recording"
+            >
+              <ContentCopyOutlinedIcon className="video-editor__duplicate-session-icon" fontSize="small" aria-hidden />
+              Duplicate
+            </button>
+            <button type="button" className="video-editor__preview-btn" onClick={onDone}>
+              Preview
+              <VisibilityOutlinedIcon className="video-editor__preview-btn-icon" fontSize="small" aria-hidden />
+            </button>
+            <button type="button" className="video-editor__save-btn" onClick={onSave}>
+              Save
+            </button>
+          </div>
         </div>
       </header>
 
