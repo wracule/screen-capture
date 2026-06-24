@@ -2486,6 +2486,32 @@
   background: #ff9356;
 }
 
+.video-editor__timeline-callout-dot--skip:not(.video-editor__timeline-callout-dot--active)::before {
+  background: #4a4a4a;
+}
+
+.video-editor__timeline-callout-dot--skip:not(.video-editor__timeline-callout-dot--active):hover::before {
+  background: #5a5a5a;
+}
+
+.video-editor__timeline-callout-dot--skip.video-editor__timeline-callout-dot--visited:not(
+    .video-editor__timeline-callout-dot--active
+  )::before {
+  background: #4a4a4a;
+}
+
+.video-editor__timeline-callout-dot--skip:not(.video-editor__timeline-callout-dot--active) .video-editor__timeline-callout-dot-skip-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  width: 14px !important;
+  height: 14px !important;
+  color: rgba(255, 255, 255, 0.92);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
 /* Pin the first marker flush to the track start (default centering would clip outside). */
 .video-editor__timeline-callout-dot--edge-start {
   left: 0;

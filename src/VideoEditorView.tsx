@@ -2414,6 +2414,7 @@ export function VideoEditorView({ videoSrc, onDone, onSave, onDelete }: VideoEdi
                                   : undefined
                               const isActive = activeCalloutGuideId === guide.id
                               const selectedSpeed = calloutSpeedByGuideId[guide.id] ?? '1'
+                              const isSkipped = selectedSpeed === 'skip'
                               const selectedSpeedIndex = calloutSpeedIndex(selectedSpeed)
                               const canCycleSpeedUp =
                                 selectedSpeedIndex < CALLOUT_SPEED_OPTIONS.length - 1
@@ -2427,11 +2428,18 @@ export function VideoEditorView({ videoSrc, onDone, onSave, onDelete }: VideoEdi
                                     ? ' video-editor__timeline-callout-dot--active'
                                     : visitedCalloutGuideIds.has(guide.id)
                                       ? ' video-editor__timeline-callout-dot--visited'
-                                      : '')
+                                      : '') +
+                                  (isSkipped ? ' video-editor__timeline-callout-dot--skip' : '')
                                 }
                                 style={dotAnchorStyle}
                                 aria-hidden={!isActive}
                               >
+                                {!isActive && isSkipped ? (
+                                  <VisibilityOffOutlinedIcon
+                                    className="video-editor__timeline-callout-dot-skip-icon"
+                                    aria-hidden
+                                  />
+                                ) : null}
                                 {isActive ? (
                                   <div
                                     ref={calloutSpeedMenuRef}
@@ -2537,7 +2545,7 @@ export function VideoEditorView({ videoSrc, onDone, onSave, onDelete }: VideoEdi
                                           setCalloutSpeedMenuOpen((open) => !open)
                                         }}
                                       >
-                                        {selectedSpeed === 'skip' ? (
+                                        {isSkipped ? (
                                           <VisibilityOffOutlinedIcon
                                             className="video-editor__timeline-callout-focus-skip-icon"
                                             aria-hidden
